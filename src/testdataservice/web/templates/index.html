@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Test Data Service</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body data-auth="{{ 'on' if auth_enabled else 'off' }}">
+  <header>
+    <div class="brand">Test Data Service</div>
+    <nav id="nav" hidden>
+      <button class="tab" data-tab="data">Data</button>
+      <button class="tab" data-tab="mykeys" id="navMyKeys" hidden>My API keys</button>
+      <button class="tab" data-tab="accounts" id="navAccounts" hidden>Accounts</button>
+      <button class="tab" data-tab="keys" id="navKeys" hidden>API keys</button>
+    </nav>
+    <div class="meta">
+      <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+      <span id="sessionInfo" hidden>
+        &middot; <span id="whoUser"></span>
+        <span id="whoAccess" class="muted"></span>
+        <button id="logoutBtn" type="button">log out</button>
+      </span>
+    </div>
+  </header>
+
+  <!-- Login -->
+  <section id="loginView" class="card center" hidden>
+    <h2>Sign in</h2>
+    <form id="loginForm">
+      <input id="loginUser" placeholder="username" autocomplete="username" required />
+      <input id="loginPass" type="password" placeholder="password" autocomplete="current-password" required />
+      <button type="submit">Log in</button>
+    </form>
+    <p class="muted">First time? The default admin is <code>admin</code> / <code>admin</code>.</p>
+    <p id="loginStatus" class="status"></p>
+  </section>
+
+  <!-- Forced password change -->
+  <section id="pwView" class="card center" hidden>
+    <h2>Set a new password</h2>
+    <p class="muted">You're signed in with a default password. Choose a new one to continue.</p>
+    <form id="pwForm">
+      <input id="pwCurrent" type="password" placeholder="current password" autocomplete="current-password" required />
+      <input id="pwNew" type="password" placeholder="new password" autocomplete="new-password" required />
+      <button type="submit">Update password</button>
+    </form>
+    <p id="pwStatus" class="status"></p>
+  </section>
+
+  <div id="appShell" hidden>
+    <!-- Data view -->
+    <main id="view-data" class="view">
+      <section class="sidebar">
+        <h2>Namespaces</h2>
+        <ul id="namespaces"><li class="empty">none yet</li></ul>
+        <form id="newNamespace" hidden>
+          <input id="nsInput" placeholder="new namespace" />
+          <button type="submit">Create</button>
+        </form>
+      </section>
+
+      <section class="content">
+        <h2 id="currentNs">Select a namespace</h2>
+        <div id="toolbar" class="toolbar" hidden>
+          <button id="downloadCsv" type="button">Download CSV</button>
+          <label class="import-label">Import CSV
+            <input id="importCsv" type="file" accept=".csv,text/csv" hidden />
+          </label>
+        </div>
+        <table id="entries" hidden>
+          <thead>
+            <tr><th>Key</th><th>Type</th><th>Value</th><th>Updated</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p id="emptyMsg" class="empty" hidden>No entries yet.</p>
+
+        <form id="entryForm" hidden>
+          <h3>Set entry</h3>
+          <input id="keyInput" placeholder="key" required />
+          <select id="typeInput">
+            {% for t in value_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+          <input id="valueInput" placeholder="value (JSON for array)" />
+          <button type="submit">Save</button>
+        </form>
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+
+    <!-- My API keys -->
+    <section id="view-mykeys" class="view panel" hidden>
+      <h2>My API keys</h2>
+      <p class="muted">Generate a key to use the REST API with your permissions.</p>
+      <form id="myKeyForm">
+        <input id="myKeyName" placeholder="key name (e.g. laptop)" required />
+        <button type="submit">Generate key</button>
+      </form>
+      <p id="myNewToken" class="token" hidden></p>
+      <table id="myKeysTable"><thead>
+        <tr><th>Name</th><th>Grants</th><th>Prefix</th><th></th></tr>
+      </thead><tbody></tbody></table>
+      <p id="myKeysStatus" class="status"></p>
+    </section>
+
+    <!-- Admin: accounts -->
+    <section id="view-accounts" class="view panel" hidden>
+      <h2>User accounts</h2>
+      <form id="accountForm">
+        <input id="accUser" placeholder="username" required />
+        <input id="accPass" type="password" placeholder="password" required />
+        <span id="accScope" class="scope">
+          <label>namespace
+            <select id="accNs"></select>
+          </label>
+          <label>access
+            <select id="accRole">
+              <option value="admin">read &amp; write</option>
+              <option value="reader">read only</option>
+            </select>
+          </label>
+        </span>
+        <label class="chk"><input id="accAdmin" type="checkbox" /> make global admin</label>
+        <button type="submit">Create user</button>
+      </form>
+      <table id="accountsTable"><thead>
+        <tr><th>Username</th><th>Role</th><th>Grants</th><th></th></tr>
+      </thead><tbody></tbody></table>
+      <p id="accountsStatus" class="status"></p>
+    </section>
+
+    <!-- Admin: standalone keys -->
+    <section id="view-keys" class="view panel" hidden>
+      <h2>API keys <span class="muted">(machine-to-machine)</span></h2>
+      <form id="keyForm">
+        <input id="keyName" placeholder="key name" required />
+        <span class="scope">
+          <label>namespace
+            <select id="keyNs"></select>
+          </label>
+          <label>access
+            <select id="keyRole">
+              <option value="admin">read &amp; write</option>
+              <option value="reader">read only</option>
+            </select>
+          </label>
+        </span>
+        <button type="submit">Create key</button>
+      </form>
+      <p id="newToken" class="token" hidden></p>
+      <table id="keysTable"><thead>
+        <tr><th>Name</th><th>Grants</th><th>Owner</th><th>Prefix</th><th></th></tr>
+      </thead><tbody></tbody></table>
+      <p id="adminStatus" class="status"></p>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+include readme.md
+include LICENSE
+include requirements.txt
+include requirements-dev.txt
+include tds.example.yml
+recursive-include src/testdataservice *.py
+recursive-include src/testdataservice/web *.html *.css *.js

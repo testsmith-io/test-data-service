@@ -1,0 +1,6 @@
+# Copy to tds.yml in your project root, then run `tds serve`.
+data_dir: ./data        # namespace files and .auth/ (accounts, keys, secret)
+auth: true              # user accounts + per-namespace access control
+host: 127.0.0.1
+port: 8000
+# secret: <set to pin session-cookie signing across restarts/instances>
