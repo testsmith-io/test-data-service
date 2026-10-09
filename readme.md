@@ -1,16 +1,6 @@
-I want to release a python package which is basically a Test Data Service.
 
-- data should be stored on disk
-- data should be accessible via an API
-- data should be accessible via a webinterface
-- Role based access can be turned on/off
 
-think of different types:
-- key / value (value can be string, boolean, number, array)
-
----
-
-## Prototype
+## Test Data Service
 
 A working prototype of the above. Data is stored as JSON files on disk
 (one file per namespace), exposed through a REST API and a web interface,
