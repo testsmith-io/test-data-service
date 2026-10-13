@@ -8,10 +8,11 @@ Provides:
 
 from __future__ import annotations
 
+import os
+import secrets
+import time
 from pathlib import Path
 from typing import Any
-
-import secrets
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
@@ -109,6 +110,31 @@ class KeyName(BaseModel):
     name: str = "api-key"
 
 
+def _shared_secret(path: Path) -> str:
+    """Return a session secret stored at ``path``, creating it atomically.
+
+    Uses an exclusive create so that when several workers start at once against
+    the same data dir, exactly one writes the secret and the rest read it — all
+    processes end up with the same value.
+    """
+    for _ in range(50):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+            time.sleep(0.02)  # another worker is mid-write; retry briefly
+            continue
+        else:
+            value = secrets.token_urlsafe(32)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(value)
+            return value
+    # Extremely unlikely; fall back to an ephemeral secret for this process.
+    return secrets.token_urlsafe(32)
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     # Config.load() reads tds.yml/tds.yaml from the cwd, then overlays env vars.
     config = config or Config.load()
@@ -117,16 +143,14 @@ def create_app(config: Config | None = None) -> FastAPI:
     keystore = KeyStore(auth_dir / "keys.json")
     accounts = AccountStore(auth_dir / "accounts.json")
 
-    # Secret for signing session cookies: config/env, else generate + persist.
+    # Secret for signing session cookies. Prefer an explicit value (TDS_SECRET /
+    # config) — REQUIRED when running more than one worker/replica, so they all
+    # verify each other's cookies. Otherwise fall back to a shared on-disk secret
+    # (first writer wins, so concurrent workers on one data dir still agree).
     secret = config.secret
     if not secret:
-        secret_file = auth_dir / "secret"
         auth_dir.mkdir(parents=True, exist_ok=True)
-        if secret_file.exists():
-            secret = secret_file.read_text(encoding="utf-8").strip()
-        else:
-            secret = secrets.token_urlsafe(32)
-            secret_file.write_text(secret, encoding="utf-8")
+        secret = _shared_secret(auth_dir / "secret")
 
     # Bootstrap keys are hashed in memory at startup; plaintext is discarded.
     bootstrap: dict[str, dict[str, str]] = {
