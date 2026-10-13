@@ -107,6 +107,10 @@ class Config:
     auth_enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 8000
+    # Storage backend: "sqlite" (default) or "file".
+    storage: str = "sqlite"
+    # SQLite DB path; defaults to <data_dir>/tds.db when unset.
+    db_path: str | None = None
     # Bootstrap keys (plaintext here, hashed in memory at startup): api_key -> grants
     api_keys: dict[str, dict[str, str]] = field(default_factory=dict)
     # Bootstrap admin token (admin on all namespaces), if set.
@@ -122,6 +126,8 @@ class Config:
             api_keys=_parse_keys(os.environ.get("TDS_API_KEYS")),
             admin_key=os.environ.get("TDS_ADMIN_KEY") or None,
             secret=os.environ.get("TDS_SECRET") or None,
+            storage=os.environ.get("TDS_STORAGE", "sqlite"),
+            db_path=os.environ.get("TDS_DB_PATH") or None,
         )
 
     @classmethod
@@ -145,6 +151,8 @@ class Config:
             cfg.port = int(data.get("port", cfg.port))
             cfg.admin_key = data.get("admin_key") or cfg.admin_key
             cfg.secret = data.get("secret") or cfg.secret
+            cfg.storage = str(data.get("storage", cfg.storage))
+            cfg.db_path = data.get("db_path") or cfg.db_path
             if isinstance(data.get("api_keys"), str):
                 cfg.api_keys = _parse_keys(data["api_keys"])
 
@@ -159,4 +167,8 @@ class Config:
             cfg.admin_key = os.environ["TDS_ADMIN_KEY"]
         if os.environ.get("TDS_SECRET"):
             cfg.secret = os.environ["TDS_SECRET"]
+        if "TDS_STORAGE" in os.environ:
+            cfg.storage = os.environ["TDS_STORAGE"]
+        if os.environ.get("TDS_DB_PATH"):
+            cfg.db_path = os.environ["TDS_DB_PATH"]
         return cfg

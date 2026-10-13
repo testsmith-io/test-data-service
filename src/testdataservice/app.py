@@ -14,11 +14,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from . import sessions
 from .accounts import AccountStore, UsernameExistsError
@@ -27,11 +27,12 @@ from .config import Config
 from .keystore import KeyStore, hash_token
 from .storage import (
     InvalidNamespaceError,
-    KeyExistsError,
-    KeyNotFoundError,
-    Storage,
+    InvalidTableError,
+    RowNotFoundError,
+    TableExistsError,
+    TableNotFoundError,
+    open_storage,
 )
-from .types import ValueType
 
 ROLES = {"admin", "reader"}
 
@@ -50,26 +51,10 @@ def _validate_grants(grants: dict[str, str]) -> dict[str, str]:
 _WEB_DIR = Path(__file__).parent / "web"
 
 
-class EntryIn(BaseModel):
-    """Body for PUT (update) — the key comes from the URL."""
+class TableCreate(BaseModel):
+    """Body for creating a table within a namespace."""
 
-    value: Any
-    type: ValueType | None = None
-
-
-class EntryCreate(BaseModel):
-    """Body for POST (create) — the key is supplied in the body."""
-
-    key: str
-    value: Any
-    type: ValueType | None = None
-
-    @field_validator("key")
-    @classmethod
-    def _key_not_blank(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("Key must be a non-empty string.")
-        return v
+    name: str
 
 
 class ApiKeyCreate(BaseModel):
@@ -139,7 +124,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     # Config.load() reads tds.yml/tds.yaml from the cwd, then overlays env vars.
     config = config or Config.load()
     auth_dir = Path(config.data_dir) / ".auth"
-    storage = Storage(config.data_dir)
+    storage = open_storage(config)
     keystore = KeyStore(auth_dir / "keys.json")
     accounts = AccountStore(auth_dir / "accounts.json")
 
@@ -208,8 +193,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         version="0.1.0",
         description=description,
         openapi_tags=[
-            {"name": "entries", "description": "Read and write key/value entries."},
             {"name": "namespaces", "description": "List, create, and delete namespaces."},
+            {"name": "tables", "description": "Tables within a namespace."},
+            {"name": "rows", "description": "Rows with dynamic columns (arbitrary fields)."},
             {"name": "accounts", "description": "Admin: manage user accounts."},
             {"name": "auth", "description": "Log in/out and change your password."},
             {"name": "keys", "description": "Manage API keys (admin, and your own)."},
@@ -242,6 +228,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "is_admin": False,
                 "username": None,
                 "must_change_password": False,
+                "grants": {},
             }
         must_change = False
         if principal.username:
@@ -253,6 +240,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             "is_admin": principal.is_global_admin(),
             "username": principal.username,
             "must_change_password": must_change,
+            "grants": principal.grants,
         }
 
     # ------------------------------------------------------------------ Auth (accounts)
@@ -458,92 +446,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="API key not found.")
         return {"revoked": key_id}
 
-    def _invalid_namespace(exc: ValueError) -> HTTPException:
+    def _bad_namespace(exc: ValueError) -> HTTPException:
         return HTTPException(status_code=400, detail=str(exc))
-
-    @app.get(
-        "/api/{namespace}",
-        dependencies=[Depends(require("read"))],
-        tags=["entries"],
-        summary="List entries in a namespace",
-    )
-    def list_entries(namespace: str) -> dict:
-        try:
-            return {"entries": [e.to_dict() for e in storage.list_entries(namespace)]}
-        except ValueError as exc:
-            raise _invalid_namespace(exc)
-
-    @app.get(
-        "/api/{namespace}/{key}",
-        dependencies=[Depends(require("read"))],
-        tags=["entries"],
-        summary="Get a single entry",
-    )
-    def get_entry(namespace: str, key: str) -> dict:
-        try:
-            return storage.get(namespace, key).to_dict()
-        except KeyNotFoundError:
-            raise HTTPException(status_code=404, detail="Key not found.")
-        except ValueError as exc:
-            raise _invalid_namespace(exc)
-
-    @app.post(
-        "/api/{namespace}",
-        dependencies=[Depends(require("write"))],
-        status_code=201,
-        tags=["entries"],
-        summary="Create a new entry in a namespace",
-    )
-    def create_entry(namespace: str, body: EntryCreate, response: Response) -> dict:
-        try:
-            entry = storage.create(namespace, body.key, body.value, body.type)
-        except KeyExistsError:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Key {body.key!r} already exists; use PUT to update it.",
-            )
-        except InvalidNamespaceError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except ValueError as exc:  # bad value type / blank key
-            raise HTTPException(status_code=422, detail=str(exc))
-        # 201 Created points at the new resource's URI.
-        response.headers["Location"] = f"/api/{namespace}/{entry.key}"
-        return entry.to_dict()
-
-    @app.put(
-        "/api/{namespace}/{key}",
-        dependencies=[Depends(require("write"))],
-        tags=["entries"],
-        summary="Update an existing entry",
-    )
-    def update_entry(namespace: str, key: str, body: EntryIn) -> dict:
-        try:
-            entry = storage.update(namespace, key, body.value, body.type)
-        except KeyNotFoundError:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Key {key!r} not found; use POST to create it.",
-            )
-        except InvalidNamespaceError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except ValueError as exc:  # bad value type
-            raise HTTPException(status_code=422, detail=str(exc))
-        return entry.to_dict()
-
-    @app.delete(
-        "/api/{namespace}/{key}",
-        dependencies=[Depends(require("write"))],
-        tags=["entries"],
-        summary="Delete an entry",
-    )
-    def delete_entry(namespace: str, key: str) -> dict:
-        try:
-            storage.delete(namespace, key)
-        except KeyNotFoundError:
-            raise HTTPException(status_code=404, detail="Key not found.")
-        except ValueError as exc:
-            raise _invalid_namespace(exc)
-        return {"deleted": key}
 
     @app.delete(
         "/api/{namespace}",
@@ -555,10 +459,135 @@ def create_app(config: Config | None = None) -> FastAPI:
         try:
             existed = storage.delete_namespace(namespace)
         except ValueError as exc:
-            raise _invalid_namespace(exc)
+            raise _bad_namespace(exc)
         if not existed:
             raise HTTPException(status_code=404, detail="Namespace not found.")
         return {"deleted": namespace}
+
+    # -- Tables ----------------------------------------------------------------
+    @app.get(
+        "/api/{namespace}",
+        dependencies=[Depends(require("read"))],
+        tags=["tables"],
+        summary="List tables in a namespace",
+    )
+    def list_tables(namespace: str) -> dict:
+        try:
+            return {"tables": storage.list_tables(namespace)}
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.post(
+        "/api/{namespace}",
+        dependencies=[Depends(require("write"))],
+        status_code=201,
+        tags=["tables"],
+        summary="Create a table in a namespace",
+    )
+    def create_table(namespace: str, body: TableCreate) -> dict:
+        try:
+            storage.create_table(namespace, body.name)
+        except TableExistsError:
+            raise HTTPException(status_code=409, detail="Table already exists.")
+        except (InvalidNamespaceError, InvalidTableError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"created": body.name}
+
+    @app.delete(
+        "/api/{namespace}/{table}",
+        dependencies=[Depends(require("write"))],
+        tags=["tables"],
+        summary="Delete a table",
+    )
+    def delete_table(namespace: str, table: str) -> dict:
+        try:
+            storage.delete_table(namespace, table)
+        except TableNotFoundError:
+            raise HTTPException(status_code=404, detail="Table not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+        return {"deleted": table}
+
+    # -- Rows (dynamic columns) ------------------------------------------------
+    @app.get(
+        "/api/{namespace}/{table}/rows",
+        dependencies=[Depends(require("read"))],
+        tags=["rows"],
+        summary="List rows in a table (with the current column set)",
+    )
+    def list_rows(namespace: str, table: str) -> dict:
+        try:
+            rows = storage.list_rows(namespace, table)
+        except TableNotFoundError:
+            raise HTTPException(status_code=404, detail="Table not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+        columns: list[str] = []
+        for r in rows:
+            for k in r.data:
+                if k not in columns:
+                    columns.append(k)
+        return {"columns": columns, "rows": [r.to_dict() for r in rows]}
+
+    @app.post(
+        "/api/{namespace}/{table}/rows",
+        dependencies=[Depends(require("write"))],
+        status_code=201,
+        tags=["rows"],
+        summary="Create a row (its fields are the request body object)",
+    )
+    def create_row(namespace: str, table: str, fields: dict[str, Any] = Body(...)) -> dict:
+        try:
+            return storage.create_row(namespace, table, fields).to_dict()
+        except TableNotFoundError:
+            raise HTTPException(status_code=404, detail="Table not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.get(
+        "/api/{namespace}/{table}/rows/{row_id}",
+        dependencies=[Depends(require("read"))],
+        tags=["rows"],
+        summary="Get a single row",
+    )
+    def get_row(namespace: str, table: str, row_id: str) -> dict:
+        try:
+            return storage.get_row(namespace, table, row_id).to_dict()
+        except (TableNotFoundError, RowNotFoundError):
+            raise HTTPException(status_code=404, detail="Row not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.put(
+        "/api/{namespace}/{table}/rows/{row_id}",
+        dependencies=[Depends(require("write"))],
+        tags=["rows"],
+        summary="Replace a row's fields",
+    )
+    def update_row(
+        namespace: str, table: str, row_id: str, fields: dict[str, Any] = Body(...)
+    ) -> dict:
+        try:
+            return storage.update_row(namespace, table, row_id, fields).to_dict()
+        except (TableNotFoundError, RowNotFoundError):
+            raise HTTPException(status_code=404, detail="Row not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.delete(
+        "/api/{namespace}/{table}/rows/{row_id}",
+        dependencies=[Depends(require("write"))],
+        tags=["rows"],
+        summary="Delete a row",
+    )
+    def delete_row(namespace: str, table: str, row_id: str) -> dict:
+        try:
+            storage.delete_row(namespace, table, row_id)
+        except (TableNotFoundError, RowNotFoundError):
+            raise HTTPException(status_code=404, detail="Row not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+        return {"deleted": row_id}
 
     # ------------------------------------------------------------------ Web UI
     @app.get("/", response_class=HTMLResponse)
@@ -566,7 +595,6 @@ def create_app(config: Config | None = None) -> FastAPI:
         # The page is a shell; JavaScript drives login/state via /api/whoami.
         html = jinja_env.get_template("index.html").render(
             auth_enabled=config.auth_enabled,
-            value_types=[t.value for t in ValueType],
         )
         return HTMLResponse(html)
 

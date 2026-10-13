@@ -63,29 +63,44 @@
 
       <section class="content">
         <h2 id="currentNs">Select a namespace</h2>
-        <div id="toolbar" class="toolbar" hidden>
-          <button id="downloadCsv" type="button">Download CSV</button>
-          <label class="import-label">Import CSV
-            <input id="importCsv" type="file" accept=".csv,text/csv" hidden />
-          </label>
-        </div>
-        <table id="entries" hidden>
-          <thead>
-            <tr><th>Key</th><th>Type</th><th>Value</th><th>Updated</th><th></th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <p id="emptyMsg" class="empty" hidden>No entries yet.</p>
 
-        <form id="entryForm" hidden>
-          <h3>Set entry</h3>
-          <input id="keyInput" placeholder="key" required />
-          <select id="typeInput">
-            {% for t in value_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-          </select>
-          <input id="valueInput" placeholder="value (JSON for array)" />
-          <button type="submit">Save</button>
-        </form>
+        <!-- Tables within the selected namespace -->
+        <div id="tablesBar" class="tables-bar" hidden>
+          <span class="muted">Tables:</span>
+          <span id="tablePills"></span>
+          <button id="newTableBtn" type="button" hidden>+ table</button>
+        </div>
+
+        <div id="tableView" hidden>
+          <div id="toolbar" class="toolbar">
+            <strong id="currentTable"></strong>
+            <span class="spacer"></span>
+            <button id="addRowBtn" type="button">+ row</button>
+            <button id="downloadCsv" type="button">Download CSV</button>
+            <label class="import-label">Import CSV
+              <input id="importCsv" type="file" accept=".csv,text/csv" hidden />
+            </label>
+            <button id="deleteTableBtn" type="button" class="link-danger">delete table</button>
+          </div>
+
+          <table id="rows" hidden><thead><tr id="rowsHead"></tr></thead><tbody></tbody></table>
+          <p id="emptyMsg" class="empty" hidden>No rows yet.</p>
+
+          <!-- Dynamic add/edit row form -->
+          <form id="rowForm" hidden>
+            <h3 id="rowFormTitle">Add row</h3>
+            <div id="rowFields"></div>
+            <div class="addfield">
+              <input id="newFieldName" placeholder="new column name" />
+              <button id="addFieldBtn" type="button">+ column</button>
+            </div>
+            <div class="rowform-actions">
+              <button type="submit">Save row</button>
+              <button id="cancelRowBtn" type="button" class="ghost">cancel</button>
+            </div>
+          </form>
+        </div>
+
         <p id="status" class="status"></p>
       </section>
     </main>

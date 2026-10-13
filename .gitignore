@@ -23,10 +23,13 @@ coverage.xml
 htmlcov/
 .mypy_cache/
 
-# Runtime data (namespace files, hashed accounts/keys, session secret)
+# Runtime data (sqlite db / namespace files, hashed accounts/keys, session secret)
 tds-data/
 data/
 tds.yml
+*.db
+*.db-wal
+*.db-shm
 
 # Editors / OS
 .DS_Store

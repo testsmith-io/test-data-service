@@ -70,7 +70,29 @@ header {
 .ns:hover, .ns.active { background: var(--panel); border-color: var(--border); }
 .content { flex: 1; padding: 16px 24px; }
 .empty { color: var(--muted); font-style: italic; }
+.tables-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.pill-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pill-btn:hover { border-color: var(--accent); }
+.pill-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin: 8px 0 4px; }
+.toolbar .spacer { flex: 1; }
+.rowacts button { padding: 3px 8px; font-size: 12px; }
+#rowForm { display: block; margin-top: 12px; max-width: 520px; }
+#rowFields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.field { display: flex; align-items: center; gap: 8px; }
+.field span { width: 140px; color: var(--muted); font-size: 13px; text-align: right; }
+.field input { flex: 1; }
+.addfield { display: flex; gap: 8px; margin-bottom: 10px; }
+.rowform-actions { display: flex; gap: 8px; }
+button.ghost { background: transparent; color: var(--muted); }
 .import-label {
   background: var(--panel);
   border: 1px solid var(--border);

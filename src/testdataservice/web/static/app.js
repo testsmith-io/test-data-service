@@ -1,11 +1,29 @@
 "use strict";
 
 let currentNs = null;
-let me = { authenticated: false, is_admin: false, username: null };
+let currentTable = null;
+let editingRowId = null;
+let currentColumns = [];
+let rowsById = {};
+let me = { authenticated: false, is_admin: false, username: null, grants: {} };
 let knownNamespaces = [];
 
 const $ = (id) => document.getElementById(id);
 const authOn = () => document.body.dataset.auth === "on";
+const enc = encodeURIComponent;
+const canWrite = (ns) =>
+  !!me.is_admin || me.grants?.[ns] === "admin" || me.grants?.["*"] === "admin";
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+// Lenient value coercion: numbers/booleans/arrays/objects via JSON, else string.
+function coerce(raw) {
+  const t = raw.trim();
+  if (t === "") return "";
+  try { return JSON.parse(t); } catch (_) { return raw; }
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
@@ -29,23 +47,6 @@ function setStatus(id, msg, kind) {
 }
 
 // -- value helpers -----------------------------------------------------
-function parseValue(type, raw) {
-  switch (type) {
-    case "string": return raw;
-    case "boolean": return raw.trim().toLowerCase() === "true";
-    case "number": {
-      const n = Number(raw);
-      if (Number.isNaN(n)) throw new Error("Invalid number.");
-      return n;
-    }
-    case "array": {
-      const v = JSON.parse(raw);
-      if (!Array.isArray(v)) throw new Error("Value must be a JSON array.");
-      return v;
-    }
-    default: return raw;
-  }
-}
 const renderValue = (v) => (typeof v === "string" ? v : JSON.stringify(v));
 const renderGrants = (g) =>
   Object.entries(g).map(([ns, role]) => (ns === "*" ? `${role} (all)` : `${role}:${ns}`)).join(", ");
@@ -176,29 +177,74 @@ async function refreshNamespaces() {
 
 async function openNamespace(ns) {
   currentNs = ns;
+  currentTable = null;
   $("currentNs").textContent = ns;
-  $("entryForm").hidden = false;
-  $("toolbar").hidden = false;
-  await refreshNamespaces();
-  await loadEntries();
+  document.querySelectorAll(".ns").forEach((b) => b.classList.toggle("active", b.dataset.ns === ns));
+  $("tablesBar").hidden = false;
+  $("newTableBtn").hidden = !canWrite(ns);
+  $("tableView").hidden = true;
+  await loadTables();
 }
 
-async function loadEntries() {
-  const table = $("entries");
-  const tbody = table.querySelector("tbody");
-  tbody.innerHTML = "";
+async function loadTables() {
+  const wrap = $("tablePills");
+  wrap.innerHTML = "";
   try {
-    const { entries } = await api("GET", `/api/${encodeURIComponent(currentNs)}`);
-    $("emptyMsg").hidden = entries.length > 0;
-    table.hidden = entries.length === 0;
-    for (const e of entries) {
+    const { tables } = await api("GET", `/api/${enc(currentNs)}`);
+    if (!tables.length) wrap.innerHTML = '<span class="empty">no tables yet</span>';
+    for (const t of tables) {
+      const b = document.createElement("button");
+      b.className = "pill-btn" + (t === currentTable ? " active" : "");
+      b.dataset.table = t;
+      b.textContent = t;
+      wrap.appendChild(b);
+    }
+  } catch (err) {
+    setStatus("status", err.message, "error");
+  }
+}
+
+async function openTable(t) {
+  currentTable = t;
+  editingRowId = null;
+  const w = canWrite(currentNs);
+  $("currentTable").textContent = t;
+  $("tableView").hidden = false;
+  $("rowForm").hidden = true;
+  $("addRowBtn").hidden = !w;
+  $("deleteTableBtn").hidden = !w;
+  $("importCsv").closest(".import-label").hidden = !w;
+  document.querySelectorAll("#tablePills .pill-btn").forEach(
+    (b) => b.classList.toggle("active", b.dataset.table === t));
+  await loadRows();
+}
+
+async function loadRows() {
+  const table = $("rows");
+  const thead = $("rowsHead");
+  const tbody = table.querySelector("tbody");
+  rowsById = {};
+  try {
+    const { columns, rows } = await api("GET", `/api/${enc(currentNs)}/${enc(currentTable)}/rows`);
+    currentColumns = columns;
+    const w = canWrite(currentNs);
+    $("emptyMsg").hidden = rows.length > 0;
+    table.hidden = rows.length === 0;
+    thead.innerHTML =
+      columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + (w ? "<th></th>" : "");
+    tbody.innerHTML = "";
+    for (const r of rows) {
+      rowsById[r.id] = r.fields;
+      let cells = columns
+        .map((c) => `<td>${r.fields[c] === undefined ? "" : escapeHtml(renderValue(r.fields[c]))}</td>`)
+        .join("");
+      if (w) {
+        cells +=
+          `<td class="rowacts"><button data-editrow="${r.id}">edit</button>` +
+          ` <button class="link-danger" data-delrow="${r.id}">delete</button></td>`;
+      }
       const tr = document.createElement("tr");
-      tr.innerHTML =
-        `<td><code>${e.key}</code></td>` +
-        `<td>${e.type}</td>` +
-        `<td>${renderValue(e.value)}</td>` +
-        `<td>${(e.updated_at || "").slice(0, 19).replace("T", " ")}</td>` +
-        `<td><button class="link-danger" data-key="${e.key}">delete</button></td>`;
+      tr.innerHTML = cells;
       tbody.appendChild(tr);
     }
     setStatus("status", "");
@@ -207,19 +253,64 @@ async function loadEntries() {
   }
 }
 
-// Create, or update if it already exists (POST collection, PUT on 409).
-async function upsertEntry(ns, key, value, type) {
-  const nsPath = `/api/${encodeURIComponent(ns)}`;
-  try {
-    await api("POST", nsPath, { key, value, type });
-  } catch (err) {
-    if (err.status === 409) {
-      await api("PUT", `${nsPath}/${encodeURIComponent(key)}`, { value, type });
-    } else {
-      throw err;
-    }
+// -- dynamic add/edit row form ----------------------------------------
+function renderRowForm(fields) {
+  const cols = [...new Set([...currentColumns, ...Object.keys(fields)])];
+  const box = $("rowFields");
+  box.innerHTML = "";
+  if (!cols.length) {
+    box.innerHTML = '<p class="muted">Add a column below to start.</p>';
   }
+  for (const c of cols) addFieldInput(c, fields[c]);
 }
+
+function addFieldInput(name, value) {
+  if ($("rowFields").querySelector(`[data-field="${CSS.escape(name)}"]`)) return;
+  const label = document.createElement("label");
+  label.className = "field";
+  const shown = value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value);
+  label.innerHTML = `<span>${escapeHtml(name)}</span>`;
+  const input = document.createElement("input");
+  input.dataset.field = name;
+  input.value = shown;
+  label.appendChild(input);
+  $("rowFields").appendChild(label);
+}
+
+function openRowForm(rowId) {
+  editingRowId = rowId;
+  $("rowFormTitle").textContent = rowId ? "Edit row" : "Add row";
+  renderRowForm(rowId ? rowsById[rowId] || {} : {});
+  $("rowForm").hidden = false;
+}
+
+$("addRowBtn").addEventListener("click", () => openRowForm(null));
+$("cancelRowBtn").addEventListener("click", () => { $("rowForm").hidden = true; });
+
+$("addFieldBtn").addEventListener("click", () => {
+  const name = $("newFieldName").value.trim();
+  if (!name) return;
+  addFieldInput(name, "");
+  $("newFieldName").value = "";
+});
+
+$("rowForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const fields = {};
+  for (const input of $("rowFields").querySelectorAll("input[data-field]")) {
+    if (input.value.trim() !== "") fields[input.dataset.field] = coerce(input.value);
+  }
+  const base = `/api/${enc(currentNs)}/${enc(currentTable)}/rows`;
+  try {
+    if (editingRowId) await api("PUT", `${base}/${enc(editingRowId)}`, fields);
+    else await api("POST", base, fields);
+    $("rowForm").hidden = true;
+    setStatus("status", "Row saved.", "ok");
+    await loadRows();
+  } catch (err) {
+    setStatus("status", err.message, "error");
+  }
+});
 
 $("newNamespace").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -228,37 +319,43 @@ $("newNamespace").addEventListener("submit", async (ev) => {
   try {
     await api("POST", "/api/namespaces", { name: ns });
     $("nsInput").value = "";
+    await refreshNamespaces();
     await openNamespace(ns);
   } catch (err) {
     setStatus("status", err.message, "error");
   }
 });
 
-$("entryForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const key = $("keyInput").value.trim();
-  const type = $("typeInput").value;
+$("newTableBtn").addEventListener("click", async () => {
+  const name = prompt("New table name:");
+  if (!name || !name.trim()) return;
   try {
-    const value = parseValue(type, $("valueInput").value);
-    await upsertEntry(currentNs, key, value, type);
-    $("keyInput").value = $("valueInput").value = "";
-    setStatus("status", `Saved "${key}".`, "ok");
-    loadEntries();
-    refreshNamespaces();
+    await api("POST", `/api/${enc(currentNs)}`, { name: name.trim() });
+    await loadTables();
+    await openTable(name.trim());
+  } catch (err) {
+    setStatus("status", err.message, "error");
+  }
+});
+
+$("deleteTableBtn").addEventListener("click", async () => {
+  if (!currentTable) return;
+  if (!confirm(`Delete table "${currentTable}" and all its rows?`)) return;
+  try {
+    await api("DELETE", `/api/${enc(currentNs)}/${enc(currentTable)}`);
+    currentTable = null;
+    $("tableView").hidden = true;
+    await loadTables();
   } catch (err) {
     setStatus("status", err.message, "error");
   }
 });
 
 // ======================================================================
-//  CSV (web-UI only; built on the entry API)
+//  CSV per table (web-UI only; built on the rows API)
 // ======================================================================
-function toCsv(entries) {
-  const esc = (s) => (/[",\n]/.test(s) ? '"' + String(s).replace(/"/g, '""') + '"' : s);
-  const enc = (v, t) => (t === "string" ? v : t === "array" ? JSON.stringify(v) : String(v));
-  const lines = ["key,type,value"];
-  for (const e of entries) lines.push([esc(e.key), e.type, esc(enc(e.value, e.type))].join(","));
-  return lines.join("\n") + "\n";
+function csvEscape(s) {
+  return /[",\n]/.test(s) ? '"' + String(s).replace(/"/g, '""') + '"' : s;
 }
 function parseCsvText(text) {
   const rows = []; let row = [], field = "", q = false;
@@ -275,51 +372,40 @@ function parseCsvText(text) {
   if (field.length || row.length) { row.push(field); rows.push(row); }
   return rows;
 }
-function inferType(raw) {
-  const t = raw.trim().toLowerCase();
-  if (t === "true" || t === "false") return "boolean";
-  if (raw.trim().startsWith("[")) return "array";
-  if (raw.trim() !== "" && !Number.isNaN(Number(raw))) return "number";
-  return "string";
-}
-function rowsToEntries(rows) {
-  if (!rows.length) return [];
-  let start = 0;
-  const h = rows[0].map((c) => c.trim().toLowerCase());
-  if ((h[0] === "key" && h[1] === "type" && h[2] === "value") || (h[0] === "key" && h[1] === "value")) start = 1;
-  const out = [];
-  for (let i = start; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r.length || r.every((c) => !c.trim())) continue;
-    const key = r[0];
-    const typeCell = r.length >= 3 ? r[1].trim() : "";
-    const rawValue = r.length >= 3 ? r[2] : (r[1] ?? "");
-    const type = typeCell || inferType(rawValue);
-    out.push({ key, type, value: parseValue(type, rawValue) });
-  }
-  return out;
-}
 async function downloadCsv() {
-  if (!currentNs) return;
+  if (!currentNs || !currentTable) return;
   try {
-    const { entries } = await api("GET", `/api/${encodeURIComponent(currentNs)}`);
-    const blob = new Blob([toCsv(entries)], { type: "text/csv" });
+    const { columns, rows } = await api("GET", `/api/${enc(currentNs)}/${enc(currentTable)}/rows`);
+    const cell = (v) => (v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v));
+    const lines = [columns.map(csvEscape).join(",")];
+    for (const r of rows) lines.push(columns.map((c) => csvEscape(cell(r.fields[c]))).join(","));
+    const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `${currentNs}.csv`;
+    a.href = url; a.download = `${currentNs}-${currentTable}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
-    setStatus("status", `Downloaded "${currentNs}.csv".`, "ok");
+    setStatus("status", `Downloaded "${currentNs}-${currentTable}.csv".`, "ok");
   } catch (err) { setStatus("status", err.message, "error"); }
 }
 async function importCsv(file) {
-  if (!currentNs || !file) return;
+  if (!currentNs || !currentTable || !file) return;
   try {
-    const entries = rowsToEntries(parseCsvText(await file.text()));
+    const grid = parseCsvText(await file.text()).filter((r) => r.some((c) => c.trim() !== ""));
+    if (!grid.length) return;
+    const header = grid[0].map((h) => h.trim());
     let n = 0;
-    for (const e of entries) { await upsertEntry(currentNs, e.key, e.value, e.type); n++; }
-    setStatus("status", `Imported ${n} entr${n === 1 ? "y" : "ies"}.`, "ok");
-    loadEntries(); refreshNamespaces();
+    for (let i = 1; i < grid.length; i++) {
+      const fields = {};
+      header.forEach((col, j) => {
+        const v = grid[i][j];
+        if (col && v !== undefined && v.trim() !== "") fields[col] = coerce(v);
+      });
+      await api("POST", `/api/${enc(currentNs)}/${enc(currentTable)}/rows`, fields);
+      n++;
+    }
+    setStatus("status", `Imported ${n} row${n === 1 ? "" : "s"}.`, "ok");
+    await loadRows();
   } catch (err) { setStatus("status", `Import failed: ${err.message}`, "error"); }
 }
 $("downloadCsv").addEventListener("click", downloadCsv);
@@ -476,32 +562,36 @@ $("keyForm").addEventListener("submit", async (ev) => {
 document.addEventListener("click", async (ev) => {
   const t = ev.target;
   if (t.matches(".ns")) { openNamespace(t.dataset.ns); return; }
+  if (t.matches(".pill-btn")) { openTable(t.dataset.table); return; }
 
+  // Edit a row.
+  if (t.dataset.editrow) { openRowForm(t.dataset.editrow); return; }
+  // Delete a row.
+  if (t.dataset.delrow) {
+    try {
+      await api("DELETE", `/api/${enc(currentNs)}/${enc(currentTable)}/rows/${enc(t.dataset.delrow)}`);
+      setStatus("status", "Row deleted.", "ok");
+      await loadRows();
+    } catch (err) { setStatus("status", err.message, "error"); }
+    return;
+  }
   // Admin: revoke standalone key.
   if (t.dataset.adminkey) {
-    try { await api("DELETE", `/api/keys/${encodeURIComponent(t.dataset.key)}`); loadKeys(); }
+    try { await api("DELETE", `/api/keys/${enc(t.dataset.key)}`); loadKeys(); }
     catch (err) { setStatus("adminStatus", err.message, "error"); }
     return;
   }
   // My key revoke.
   if (t.dataset.mykey) {
-    try { await api("DELETE", `/api/me/keys/${encodeURIComponent(t.dataset.mykey)}`); loadMyKeys(); }
+    try { await api("DELETE", `/api/me/keys/${enc(t.dataset.mykey)}`); loadMyKeys(); }
     catch (err) { setStatus("myKeysStatus", err.message, "error"); }
     return;
   }
   // Admin: delete account.
   if (t.dataset.acct) {
-    try { await api("DELETE", `/api/accounts/${encodeURIComponent(t.dataset.acct)}`); loadAccounts(); }
+    try { await api("DELETE", `/api/accounts/${enc(t.dataset.acct)}`); loadAccounts(); }
     catch (err) { setStatus("accountsStatus", err.message, "error"); }
     return;
-  }
-  // Entry delete (has data-key but not data-adminkey).
-  if (t.matches(".link-danger") && t.dataset.key !== undefined) {
-    try {
-      await api("DELETE", `/api/${encodeURIComponent(currentNs)}/${encodeURIComponent(t.dataset.key)}`);
-      setStatus("status", `Deleted "${t.dataset.key}".`, "ok");
-      loadEntries(); refreshNamespaces();
-    } catch (err) { setStatus("status", err.message, "error"); }
   }
 });
 

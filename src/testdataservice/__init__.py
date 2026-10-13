@@ -1,26 +1,36 @@
-"""Test Data Service — a disk-backed key/value store with an API and web UI."""
+"""Test Data Service — a disk-backed namespace/table/row store with an API and web UI."""
 
 from .app import create_app
 from .config import Config
 from .storage import (
     Storage,
-    Entry,
-    KeyNotFoundError,
-    KeyExistsError,
+    FileStorage,
+    StorageBackend,
+    open_storage,
+    Row,
+    NamespaceNotFoundError,
+    TableNotFoundError,
+    TableExistsError,
+    RowNotFoundError,
     InvalidNamespaceError,
-    InvalidKeyError,
+    InvalidTableError,
 )
-from .types import ValueType
+from .sqlite_storage import SqliteStorage
 
 __version__ = "0.1.0"
 __all__ = [
     "create_app",
     "Config",
     "Storage",
-    "Entry",
-    "KeyNotFoundError",
-    "KeyExistsError",
+    "FileStorage",
+    "SqliteStorage",
+    "StorageBackend",
+    "open_storage",
+    "Row",
+    "NamespaceNotFoundError",
+    "TableNotFoundError",
+    "TableExistsError",
+    "RowNotFoundError",
     "InvalidNamespaceError",
-    "InvalidKeyError",
-    "ValueType",
+    "InvalidTableError",
 ]
