@@ -120,6 +120,16 @@ class StorageBackend(ABC):
     def delete_table(self, namespace: str, table: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_columns(self, namespace: str, table: str) -> list[str]:
+        """The table's designed (persistent) columns, in order."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_columns(self, namespace: str, table: str, columns: list[str]) -> list[str]:
+        """Replace the table's designed columns."""
+        raise NotImplementedError
+
     # rows
     @abstractmethod
     def list_rows(self, namespace: str, table: str) -> list[Row]:
@@ -142,8 +152,8 @@ class StorageBackend(ABC):
         raise NotImplementedError
 
     def columns(self, namespace: str, table: str) -> list[str]:
-        """Union of field names across the table's rows, in first-seen order."""
-        cols: list[str] = []
+        """Effective columns: the designed columns, then any extra row fields."""
+        cols: list[str] = list(self.get_columns(namespace, table))
         for row in self.list_rows(namespace, table):
             for k in row.data:
                 if k not in cols:
@@ -214,7 +224,7 @@ class FileStorage(StorageBackend):
             data = self._load(namespace)
             if table in data:
                 raise TableExistsError(table)
-            data[table] = {}
+            data[table] = {"columns": [], "rows": {}}
             self._dump(namespace, data)
 
     def delete_table(self, namespace: str, table: str) -> None:
@@ -225,13 +235,33 @@ class FileStorage(StorageBackend):
             del data[table]
             self._dump(namespace, data)
 
+    @staticmethod
+    def _rows(table_rec: dict) -> dict:
+        return table_rec.get("rows", {})
+
+    def get_columns(self, namespace: str, table: str) -> list[str]:
+        with self._lock:
+            data = self._load(namespace)
+            if table not in data:
+                raise TableNotFoundError(table)
+            return list(data[table].get("columns", []))
+
+    def set_columns(self, namespace: str, table: str, columns: list[str]) -> list[str]:
+        with self._lock:
+            data = self._load(namespace)
+            if table not in data:
+                raise TableNotFoundError(table)
+            data[table]["columns"] = list(columns)
+            self._dump(namespace, data)
+            return list(columns)
+
     # -- rows ----------------------------------------------------------
     def list_rows(self, namespace: str, table: str) -> list[Row]:
         with self._lock:
             data = self._load(namespace)
             if table not in data:
                 raise TableNotFoundError(table)
-            rows = data[table]
+            rows = self._rows(data[table])
         return [self._to_row(rid, rec) for rid, rec in sorted(rows.items())]
 
     def get_row(self, namespace: str, table: str, row_id: str) -> Row:
@@ -239,9 +269,10 @@ class FileStorage(StorageBackend):
             data = self._load(namespace)
             if table not in data:
                 raise TableNotFoundError(table)
-            if row_id not in data[table]:
+            rows = self._rows(data[table])
+            if row_id not in rows:
                 raise RowNotFoundError(row_id)
-            return self._to_row(row_id, data[table][row_id])
+            return self._to_row(row_id, rows[row_id])
 
     def create_row(self, namespace: str, table: str, fields: dict[str, Any]) -> Row:
         if not isinstance(fields, dict):
@@ -252,7 +283,7 @@ class FileStorage(StorageBackend):
                 raise TableNotFoundError(table)
             row_id = secrets.token_hex(6)
             rec = {"data": dict(fields), "updated_at": _now()}
-            data[table][row_id] = rec
+            data[table].setdefault("rows", {})[row_id] = rec
             self._dump(namespace, data)
             return self._to_row(row_id, rec)
 
@@ -263,10 +294,11 @@ class FileStorage(StorageBackend):
             data = self._load(namespace)
             if table not in data:
                 raise TableNotFoundError(table)
-            if row_id not in data[table]:
+            rows = self._rows(data[table])
+            if row_id not in rows:
                 raise RowNotFoundError(row_id)
             rec = {"data": dict(fields), "updated_at": _now()}
-            data[table][row_id] = rec
+            rows[row_id] = rec
             self._dump(namespace, data)
             return self._to_row(row_id, rec)
 
@@ -275,9 +307,10 @@ class FileStorage(StorageBackend):
             data = self._load(namespace)
             if table not in data:
                 raise TableNotFoundError(table)
-            if row_id not in data[table]:
+            rows = self._rows(data[table])
+            if row_id not in rows:
                 raise RowNotFoundError(row_id)
-            del data[table][row_id]
+            del rows[row_id]
             self._dump(namespace, data)
 
     @staticmethod

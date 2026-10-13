@@ -8,13 +8,14 @@ Provides:
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -37,6 +38,27 @@ from .storage import (
 ROLES = {"admin", "reader"}
 
 
+def _coerce_query(raw: str) -> Any:
+    """Interpret a query-string value: JSON scalar/array if possible, else text."""
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
+def _row_matches(fields: dict[str, Any], filters: dict[str, str]) -> bool:
+    """True if every ``column=value`` condition matches the row's fields (AND)."""
+    for key, raw in filters.items():
+        if key not in fields:
+            return False
+        value = fields[key]
+        # Match either the coerced value (so age=30 hits a numeric 30) or the
+        # plain string form (so it still works if the field is stored as text).
+        if value != _coerce_query(raw) and str(value) != raw:
+            return False
+    return True
+
+
 def _validate_grants(grants: dict[str, str]) -> dict[str, str]:
     if not grants:
         raise ValueError("At least one namespace grant is required.")
@@ -55,6 +77,12 @@ class TableCreate(BaseModel):
     """Body for creating a table within a namespace."""
 
     name: str
+
+
+class TableColumns(BaseModel):
+    """Body for designing a table's columns."""
+
+    columns: list[str]
 
 
 class ApiKeyCreate(BaseModel):
@@ -508,26 +536,67 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise _bad_namespace(exc)
         return {"deleted": table}
 
+    @app.get(
+        "/api/{namespace}/{table}",
+        dependencies=[Depends(require("read"))],
+        tags=["tables"],
+        summary="Get a table's designed columns",
+    )
+    def get_table(namespace: str, table: str) -> dict:
+        try:
+            return {"name": table, "columns": storage.get_columns(namespace, table)}
+        except TableNotFoundError:
+            raise HTTPException(status_code=404, detail="Table not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.put(
+        "/api/{namespace}/{table}",
+        dependencies=[Depends(require("write"))],
+        tags=["tables"],
+        summary="Design a table's columns (persisted, even with no rows)",
+    )
+    def set_table_columns(namespace: str, table: str, body: TableColumns) -> dict:
+        names: list[str] = []
+        for c in body.columns:
+            c = str(c).strip()
+            if not c:
+                raise HTTPException(status_code=422, detail="Column names must be non-empty.")
+            if c not in names:
+                names.append(c)
+        try:
+            return {"name": table, "columns": storage.set_columns(namespace, table, names)}
+        except TableNotFoundError:
+            raise HTTPException(status_code=404, detail="Table not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
     # -- Rows (dynamic columns) ------------------------------------------------
     @app.get(
         "/api/{namespace}/{table}/rows",
         dependencies=[Depends(require("read"))],
         tags=["rows"],
-        summary="List rows in a table (with the current column set)",
+        summary="List rows; filter with ?column=value (multiple are AND-ed)",
     )
-    def list_rows(namespace: str, table: str) -> dict:
+    def list_rows(namespace: str, table: str, request: Request) -> dict:
         try:
             rows = storage.list_rows(namespace, table)
+            defined = storage.get_columns(namespace, table)
+            columns = storage.columns(namespace, table)  # defined + extra row fields
         except TableNotFoundError:
             raise HTTPException(status_code=404, detail="Table not found.")
         except ValueError as exc:
             raise _bad_namespace(exc)
-        columns: list[str] = []
-        for r in rows:
-            for k in r.data:
-                if k not in columns:
-                    columns.append(k)
-        return {"columns": columns, "rows": [r.to_dict() for r in rows]}
+        # Every query param is a column=value filter (e.g. ?status=ok&ean=123).
+        filters = dict(request.query_params)
+        filters.pop("api_key", None)  # reserved for auth, not a column filter
+        if filters:
+            rows = [r for r in rows if _row_matches(r.data, filters)]
+        return {
+            "columns": columns,
+            "defined": defined,
+            "rows": [r.to_dict() for r in rows],
+        }
 
     @app.post(
         "/api/{namespace}/{table}/rows",

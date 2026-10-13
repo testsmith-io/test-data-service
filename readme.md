@@ -48,9 +48,12 @@ Three levels: **namespace → table → row**.
 * A **namespace** is the unit of access control.
 * A namespace holds any number of **tables**.
 * A table holds **rows**, and each row is a record with an **arbitrary set of
-  fields** — the "columns" are dynamic. Different rows may have different fields;
-  a table's column set is just the union of the fields present across its rows.
-  Field values can be any JSON (string, number, boolean, array, object, null).
+  fields**. Field values can be any JSON (string, number, boolean, array,
+  object, null).
+* A table can also have **designed columns** — a persisted column list you set
+  up front (the "schema"), which shows even before any rows exist. The
+  *effective* columns of a table are its designed columns plus any extra fields
+  that appear in its rows, so the layout stays dynamic.
 
 ### REST API
 
@@ -63,12 +66,18 @@ Three levels: **namespace → table → row**.
 | `DELETE` | `/api/{ns}`                       | write `ns` | Delete a namespace              |
 | `GET`    | `/api/{ns}`                       | read `ns`  | List tables                     |
 | `POST`   | `/api/{ns}`                       | write `ns` | Create a table (`{"name": …}`)  |
+| `GET`    | `/api/{ns}/{table}`               | read `ns`  | Get a table's designed columns  |
+| `PUT`    | `/api/{ns}/{table}`               | write `ns` | Design columns (`{"columns":[…]}`) |
 | `DELETE` | `/api/{ns}/{table}`               | write `ns` | Delete a table                  |
-| `GET`    | `/api/{ns}/{table}/rows`          | read `ns`  | List rows + current columns     |
+| `GET`    | `/api/{ns}/{table}/rows`          | read `ns`  | List rows (filter with `?col=value`) |
 | `POST`   | `/api/{ns}/{table}/rows`          | write `ns` | Create a row (body = its fields)|
 | `GET`    | `/api/{ns}/{table}/rows/{id}`     | read `ns`  | Get one row                     |
 | `PUT`    | `/api/{ns}/{table}/rows/{id}`     | write `ns` | Replace a row's fields          |
 | `DELETE` | `/api/{ns}/{table}/rows/{id}`     | write `ns` | Delete a row                    |
+
+In the web UI, open a table and use the **Columns** designer to add/remove
+columns; they persist and appear in the grid and the add-row form even with no
+rows yet.
 
 ```bash
 curl -X POST localhost:8000/api/namespaces -H 'Content-Type: application/json' -d '{"name":"demo"}'
@@ -82,7 +91,15 @@ curl -X POST localhost:8000/api/demo/users/rows \
 
 curl localhost:8000/api/demo/users/rows
 # -> {"columns":["name","age","active", ...], "rows":[{"id":..., "fields":{...}}, ...]}
+
+# filter by column conditions — each query param is a column=value test,
+# and multiple are AND-ed together:
+curl "localhost:8000/api/demo/users/rows?status=ok&ean=123"
 ```
+
+Filter values are matched leniently: `ean=123` matches a numeric `123` or the
+string `"123"`, `active=true` matches the boolean. The web UI has a matching
+**filter** box on each table (type `status=ok&ean=123`).
 
 (The names `namespaces`, `health`, `whoami`, `keys`, `accounts`, `login`,
 `logout`, `password`, and `me` are reserved and can't be used as namespaces.)

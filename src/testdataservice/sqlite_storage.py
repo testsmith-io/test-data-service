@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS namespaces (name TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tables (
     namespace TEXT NOT NULL,
     tbl TEXT NOT NULL,
+    columns TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (namespace, tbl)
 );
 CREATE TABLE IF NOT EXISTS rows (
@@ -59,6 +60,12 @@ class SqliteStorage(StorageBackend):
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            # Migrate DBs created before the `columns` column existed.
+            cols = [r[1] for r in self._conn.execute("PRAGMA table_info(tables)")]
+            if "columns" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE tables ADD COLUMN columns TEXT NOT NULL DEFAULT '[]'"
+                )
 
     # -- helpers -------------------------------------------------------
     def _table_exists(self, namespace: str, table: str) -> bool:
@@ -117,6 +124,27 @@ class SqliteStorage(StorageBackend):
                 raise TableNotFoundError(table)
             self._conn.execute("DELETE FROM tables WHERE namespace=? AND tbl=?", (namespace, table))
             self._conn.execute("DELETE FROM rows WHERE namespace=? AND tbl=?", (namespace, table))
+
+    def get_columns(self, namespace: str, table: str) -> list[str]:
+        check_namespace(namespace)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT columns FROM tables WHERE namespace=? AND tbl=?", (namespace, table)
+            ).fetchone()
+            if row is None:
+                raise TableNotFoundError(table)
+            return json.loads(row[0])
+
+    def set_columns(self, namespace: str, table: str, columns: list[str]) -> list[str]:
+        check_namespace(namespace)
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tables SET columns=? WHERE namespace=? AND tbl=?",
+                (json.dumps(list(columns)), namespace, table),
+            )
+            if cur.rowcount == 0:
+                raise TableNotFoundError(table)
+            return list(columns)
 
     # -- rows ----------------------------------------------------------
     def list_rows(self, namespace: str, table: str) -> list[Row]:

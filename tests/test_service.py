@@ -67,6 +67,17 @@ def test_storage_rejects_reserved_namespace(make_storage):
         make_storage().create_table("namespaces", "t")
 
 
+def test_storage_designed_columns_persist_without_rows(make_storage):
+    make_storage().create_table("ns", "t")
+    make_storage().set_columns("ns", "t", ["name", "age"])
+    # Designed columns persist with zero rows, and show up as effective columns.
+    assert make_storage().get_columns("ns", "t") == ["name", "age"]
+    assert make_storage().columns("ns", "t") == ["name", "age"]
+    # A row with an extra field adds a column on top of the designed ones.
+    make_storage().create_row("ns", "t", {"name": "a", "extra": 1})
+    assert make_storage().columns("ns", "t") == ["name", "age", "extra"]
+
+
 # ------------------------------------------------------------- config parsing
 def test_config_parses_namespace_scoped_keys():
     from testdataservice.config import _parse_keys
@@ -135,6 +146,33 @@ def test_api_works_on_file_backend(tmp_path):
     assert c.post("/api/n", json={"name": "t"}).status_code == 201
     assert c.post("/api/n/t/rows", json={"a": 1}).status_code == 201
     assert c.get("/api/n/t/rows").json()["columns"] == ["a"]
+
+
+def test_api_row_filtering(client):
+    client.post("/api/shop", json={"name": "products"})
+    client.post("/api/shop/products/rows", json={"status": "ok", "ean": 123, "name": "a"})
+    client.post("/api/shop/products/rows", json={"status": "ok", "ean": 999, "name": "b"})
+    client.post("/api/shop/products/rows", json={"status": "bad", "ean": 123, "name": "c"})
+
+    def names(**params):
+        q = "&".join(f"{k}={v}" for k, v in params.items())
+        rows = client.get(f"/api/shop/products/rows?{q}").json()["rows"]
+        return sorted(r["fields"]["name"] for r in rows)
+
+    assert names(status="ok") == ["a", "b"]
+    assert names(ean="123") == ["a", "c"]  # numeric field matched via string
+    assert names(status="ok", ean="123") == ["a"]  # multiple conditions AND
+    assert names(status="missing") == []
+
+
+def test_api_design_columns(client):
+    client.post("/api/n", json={"name": "t"})
+    r = client.put("/api/n/t", json={"columns": ["name", "age", "name"]})  # dupe dropped
+    assert r.status_code == 200 and r.json()["columns"] == ["name", "age"]
+    # effective columns include the designed ones even with no rows
+    listing = client.get("/api/n/t/rows").json()
+    assert listing["defined"] == ["name", "age"]
+    assert listing["columns"] == ["name", "age"]
 
 
 def test_sqlite_db_created_in_data_dir(tmp_path):

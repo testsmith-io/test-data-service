@@ -84,6 +84,30 @@ header {
 .pill-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin: 8px 0 4px; }
 .toolbar .spacer { flex: 1; }
+.toolbar .filter { width: 240px; font-size: 13px; }
+.designer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.designer form.inline { display: inline-flex; gap: 6px; margin: 0; }
+.designer form.inline input { padding: 4px 8px; font-size: 13px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 6px 3px 10px;
+  font-size: 13px;
+}
+.chip button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.chip button:hover { color: var(--danger); }
 .rowacts button { padding: 3px 8px; font-size: 12px; }
 #rowForm { display: block; margin-top: 12px; max-width: 520px; }
 #rowFields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }

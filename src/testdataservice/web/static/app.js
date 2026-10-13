@@ -4,6 +4,7 @@ let currentNs = null;
 let currentTable = null;
 let editingRowId = null;
 let currentColumns = [];
+let definedColumns = [];
 let rowsById = {};
 let me = { authenticated: false, is_admin: false, username: null, grants: {} };
 let knownNamespaces = [];
@@ -207,6 +208,7 @@ async function loadTables() {
 async function openTable(t) {
   currentTable = t;
   editingRowId = null;
+  $("rowFilter").value = "";
   const w = canWrite(currentNs);
   $("currentTable").textContent = t;
   $("tableView").hidden = false;
@@ -225,8 +227,13 @@ async function loadRows() {
   const tbody = table.querySelector("tbody");
   rowsById = {};
   try {
-    const { columns, rows } = await api("GET", `/api/${enc(currentNs)}/${enc(currentTable)}/rows`);
+    const filter = ($("rowFilter").value || "").trim();
+    const url =
+      `/api/${enc(currentNs)}/${enc(currentTable)}/rows` + (filter ? `?${filter}` : "");
+    const { columns, defined, rows } = await api("GET", url);
     currentColumns = columns;
+    definedColumns = defined || [];
+    renderColumnsDesigner();
     const w = canWrite(currentNs);
     $("emptyMsg").hidden = rows.length > 0;
     table.hidden = rows.length === 0;
@@ -252,6 +259,39 @@ async function loadRows() {
     setStatus("status", err.message, "error");
   }
 }
+
+// -- column designer (persisted table schema) -------------------------
+function renderColumnsDesigner() {
+  const w = canWrite(currentNs);
+  $("columnsDesigner").hidden = !w;
+  if (!w) return;
+  const chips = $("columnChips");
+  chips.innerHTML = "";
+  if (!definedColumns.length) {
+    chips.innerHTML = '<span class="empty">none — add some</span>';
+  }
+  for (const c of definedColumns) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `${escapeHtml(c)} <button type="button" data-delcol="${escapeHtml(c)}">×</button>`;
+    chips.appendChild(chip);
+  }
+}
+
+async function saveColumns(cols) {
+  await api("PUT", `/api/${enc(currentNs)}/${enc(currentTable)}`, { columns: cols });
+  await loadRows();
+}
+
+$("addColumnForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const name = $("newColumnName").value.trim();
+  if (!name || definedColumns.includes(name)) { $("newColumnName").value = ""; return; }
+  try {
+    await saveColumns([...definedColumns, name]);
+    $("newColumnName").value = "";
+  } catch (err) { setStatus("status", err.message, "error"); }
+});
 
 // -- dynamic add/edit row form ----------------------------------------
 function renderRowForm(fields) {
@@ -283,6 +323,12 @@ function openRowForm(rowId) {
   renderRowForm(rowId ? rowsById[rowId] || {} : {});
   $("rowForm").hidden = false;
 }
+
+let filterTimer;
+$("rowFilter").addEventListener("input", () => {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => loadRows(), 300);
+});
 
 $("addRowBtn").addEventListener("click", () => openRowForm(null));
 $("cancelRowBtn").addEventListener("click", () => { $("rowForm").hidden = true; });
@@ -564,6 +610,12 @@ document.addEventListener("click", async (ev) => {
   if (t.matches(".ns")) { openNamespace(t.dataset.ns); return; }
   if (t.matches(".pill-btn")) { openTable(t.dataset.table); return; }
 
+  // Remove a designed column.
+  if (t.dataset.delcol) {
+    try { await saveColumns(definedColumns.filter((c) => c !== t.dataset.delcol)); }
+    catch (err) { setStatus("status", err.message, "error"); }
+    return;
+  }
   // Edit a row.
   if (t.dataset.editrow) { openRowForm(t.dataset.editrow); return; }
   // Delete a row.

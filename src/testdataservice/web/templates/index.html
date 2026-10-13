@@ -74,6 +74,7 @@
         <div id="tableView" hidden>
           <div id="toolbar" class="toolbar">
             <strong id="currentTable"></strong>
+            <input id="rowFilter" class="filter" placeholder="filter: status=ok&amp;ean=123" />
             <span class="spacer"></span>
             <button id="addRowBtn" type="button">+ row</button>
             <button id="downloadCsv" type="button">Download CSV</button>
@@ -81,6 +82,16 @@
               <input id="importCsv" type="file" accept=".csv,text/csv" hidden />
             </label>
             <button id="deleteTableBtn" type="button" class="link-danger">delete table</button>
+          </div>
+
+          <!-- Column designer (persisted table schema) -->
+          <div id="columnsDesigner" class="designer" hidden>
+            <span class="muted">Columns:</span>
+            <span id="columnChips"></span>
+            <form id="addColumnForm" class="inline">
+              <input id="newColumnName" placeholder="column name" />
+              <button type="submit">+ column</button>
+            </form>
           </div>
 
           <table id="rows" hidden><thead><tr id="rowsHead"></tr></thead><tbody></tbody></table>
