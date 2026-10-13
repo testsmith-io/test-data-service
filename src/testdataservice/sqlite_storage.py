@@ -56,7 +56,14 @@ class SqliteStorage(StorageBackend):
         # check_same_thread=False: one connection shared across worker threads,
         # serialized by our own lock.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        # Use the rollback journal (not WAL): every committed transaction is
+        # written fully into tds.db itself, with no -wal/-shm sidecar files that
+        # a volume or an unclean container stop might fail to persist. This makes
+        # the single db file as durable as the file backend's JSON. journal_mode
+        # is sticky in the db header, so we set it explicitly on every open to
+        # convert any existing WAL database back.
+        self._conn.execute("PRAGMA journal_mode=DELETE")
+        self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._conn:
             self._conn.executescript(_SCHEMA)

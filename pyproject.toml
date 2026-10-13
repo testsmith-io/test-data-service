@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "test-data-service"
-version = "0.3.0"
+version = "0.4.0"
 description = "A disk-backed test data service with a REST API and web interface"
 readme = "readme.md"
 requires-python = ">=3.10"
