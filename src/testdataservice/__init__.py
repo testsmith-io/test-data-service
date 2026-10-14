@@ -1,5 +1,7 @@
 """Test Data Service — a disk-backed namespace/table/row store with an API and web UI."""
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .app import create_app
 from .config import Config
 from .storage import (
@@ -17,7 +19,10 @@ from .storage import (
 )
 from .sqlite_storage import SqliteStorage
 
-__version__ = "0.1.0"
+try:
+    __version__ = _pkg_version("test-data-service")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    __version__ = "0.6.0"
 __all__ = [
     "create_app",
     "Config",

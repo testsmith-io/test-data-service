@@ -12,8 +12,14 @@ import json
 import os
 import secrets
 import time
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import Any
+
+try:
+    APP_VERSION = _pkg_version("test-data-service")
+except PackageNotFoundError:  # running from an uninstalled source tree
+    APP_VERSION = "0.6.0"
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -218,7 +224,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Test Data Service",
-        version="0.1.0",
+        version=APP_VERSION,
         description=description,
         openapi_tags=[
             {"name": "namespaces", "description": "List, create, and delete namespaces."},
