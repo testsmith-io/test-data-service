@@ -160,6 +160,20 @@ class StorageBackend(ABC):
                     cols.append(k)
         return cols
 
+    def patch_row(self, namespace: str, table: str, row_id: str, patch: dict[str, Any]) -> Row:
+        """Partially update a row (JSON Merge Patch): given fields are set, a
+        field whose value is ``None`` is removed, others are left untouched."""
+        if not isinstance(patch, dict):
+            raise ValueError("Patch body must be a JSON object.")
+        current = self.get_row(namespace, table, row_id).data  # may raise Not*Found
+        merged = dict(current)
+        for key, value in patch.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        return self.update_row(namespace, table, row_id, merged)
+
 
 class FileStorage(StorageBackend):
     """A namespaced, JSON-file-backed store of tables and dynamic-column rows."""

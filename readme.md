@@ -73,6 +73,7 @@ Three levels: **namespace → table → row**.
 | `POST`   | `/api/{ns}/{table}/rows`          | write `ns` | Create a row (body = its fields)|
 | `GET`    | `/api/{ns}/{table}/rows/{id}`     | read `ns`  | Get one row                     |
 | `PUT`    | `/api/{ns}/{table}/rows/{id}`     | write `ns` | Replace a row's fields          |
+| `PATCH`  | `/api/{ns}/{table}/rows/{id}`     | write `ns` | Partially update a row (merge)  |
 | `DELETE` | `/api/{ns}/{table}/rows/{id}`     | write `ns` | Delete a row                    |
 
 In the web UI, open a table and use the **Columns** designer to add/remove
@@ -95,6 +96,11 @@ curl localhost:8000/api/demo/users/rows
 # filter by column conditions — each query param is a column=value test,
 # and multiple are AND-ed together:
 curl "localhost:8000/api/demo/users/rows?status=ok&ean=123"
+
+# partial update (PATCH): merge fields; a null value removes that field.
+# PUT replaces the whole row, PATCH only touches the keys you send.
+curl -X PATCH localhost:8000/api/demo/users/rows/<id> \
+  -H 'Content-Type: application/json' -d '{"role":"admin","note":null}'
 ```
 
 Filter values are matched leniently: `ean=123` matches a numeric `123` or the

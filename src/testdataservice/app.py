@@ -19,7 +19,7 @@ from typing import Any
 try:
     APP_VERSION = _pkg_version("test-data-service")
 except PackageNotFoundError:  # running from an uninstalled source tree
-    APP_VERSION = "0.6.0"
+    APP_VERSION = "0.7.0"
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -643,6 +643,22 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> dict:
         try:
             return storage.update_row(namespace, table, row_id, fields).to_dict()
+        except (TableNotFoundError, RowNotFoundError):
+            raise HTTPException(status_code=404, detail="Row not found.")
+        except ValueError as exc:
+            raise _bad_namespace(exc)
+
+    @app.patch(
+        "/api/{namespace}/{table}/rows/{row_id}",
+        dependencies=[Depends(require("write"))],
+        tags=["rows"],
+        summary="Partially update a row (merge; a null value removes that field)",
+    )
+    def patch_row(
+        namespace: str, table: str, row_id: str, fields: dict[str, Any] = Body(...)
+    ) -> dict:
+        try:
+            return storage.patch_row(namespace, table, row_id, fields).to_dict()
         except (TableNotFoundError, RowNotFoundError):
             raise HTTPException(status_code=404, detail="Row not found.")
         except ValueError as exc:

@@ -22,7 +22,7 @@ from .sqlite_storage import SqliteStorage
 try:
     __version__ = _pkg_version("test-data-service")
 except PackageNotFoundError:  # running from a source tree that isn't installed
-    __version__ = "0.6.0"
+    __version__ = "0.7.0"
 __all__ = [
     "create_app",
     "Config",

@@ -165,6 +165,23 @@ def test_api_row_filtering(client):
     assert names(status="missing") == []
 
 
+def test_api_patch_row(client):
+    client.post("/api/shop", json={"name": "items"})
+    rid = client.post("/api/shop/items/rows", json={"name": "a", "status": "new", "qty": 1}).json()[
+        "id"
+    ]
+    # PATCH merges: status changes, qty untouched, note added.
+    r = client.patch(f"/api/shop/items/rows/{rid}", json={"status": "ok", "note": "hi"})
+    assert r.status_code == 200
+    assert r.json()["fields"] == {"name": "a", "status": "ok", "qty": 1, "note": "hi"}
+    # A null value removes that field.
+    r2 = client.patch(f"/api/shop/items/rows/{rid}", json={"note": None})
+    assert "note" not in r2.json()["fields"]
+    assert r2.json()["fields"] == {"name": "a", "status": "ok", "qty": 1}
+    # Missing row -> 404.
+    assert client.patch("/api/shop/items/rows/nope", json={"x": 1}).status_code == 404
+
+
 def test_api_design_columns(client):
     client.post("/api/n", json={"name": "t"})
     r = client.put("/api/n/t", json={"columns": ["name", "age", "name"]})  # dupe dropped
