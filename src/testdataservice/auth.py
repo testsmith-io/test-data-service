@@ -17,11 +17,19 @@ admin who may manage namespaces, accounts, and keys.
 
 from __future__ import annotations
 
-from fastapi import Cookie, Depends, Header, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader
 
 from .config import WILDCARD, Config
 
 SESSION_COOKIE = "tds_session"
+
+# The single API credential, declared as an OpenAPI security scheme so Swagger
+# shows one "Authorize" field. The web-UI session cookie is read off the request
+# directly (below) so it keeps working without appearing in the API docs.
+# auto_error=False: a missing key yields None instead of a 401 here, so we can
+# fall back to the cookie and raise our own error.
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 _ROLE_PERMS = {
     "admin": {"read", "write"},
@@ -96,11 +104,11 @@ def build_dependencies(config: Config, resolve_key, resolve_session):
         return None
 
     def current_principal(
-        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-        api_key: str | None = Query(default=None),
-        session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+        request: Request,
+        x_api_key: str | None = Security(api_key_header),
     ) -> Principal:
-        principal = _lookup(x_api_key, api_key, session)
+        session = request.cookies.get(SESSION_COOKIE)
+        principal = _lookup(x_api_key, None, session)
         if principal is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -110,11 +118,10 @@ def build_dependencies(config: Config, resolve_key, resolve_session):
         return principal
 
     def optional_principal(
-        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-        api_key: str | None = Query(default=None),
-        session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+        request: Request,
+        x_api_key: str | None = Security(api_key_header),
     ) -> Principal | None:
-        return _lookup(x_api_key, api_key, session)
+        return _lookup(x_api_key, None, request.cookies.get(SESSION_COOKIE))
 
     def require(perm: str):
         def checker(

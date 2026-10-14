@@ -589,7 +589,6 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise _bad_namespace(exc)
         # Every query param is a column=value filter (e.g. ?status=ok&ean=123).
         filters = dict(request.query_params)
-        filters.pop("api_key", None)  # reserved for auth, not a column filter
         if filters:
             rows = [r for r in rows if _row_matches(r.data, filters)]
         return {
